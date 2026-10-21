@@ -3,3 +3,4 @@ if (!process.env.CI && existsSync(new URL('../node_modules/husky', import.meta.u
   const { default: husky } = await import('husky');
   husky();
 }
+await import('./build.mjs');
