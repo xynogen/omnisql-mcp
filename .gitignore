@@ -54,3 +54,6 @@ database-mcp/
 
 # Rust compilation output (portable runtime assets are tracked)
 native/**/target/
+
+# Pix Agent
+.pi/
