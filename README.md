@@ -237,6 +237,8 @@ Exports support optional gzip, Brotli, and zstd downloads through `export_data.c
 - `alter_table` - Modify tables
 - `drop_table` - Drop tables (requires confirmation)
 
+`drop_table` requires `confirm: true` and checks table existence and access before execution. Pass an exact catalog name as `table` or `schema.table`, without SQL quotes; each part must match `[A-Za-z_][A-Za-z0-9_]*` and be at most 128 characters. Case is preserved, including Oracle names (typically uppercase). SQLite drops support only the `main` schema. Read-only and table access policies still apply.
+
 ### Transactions
 PostgreSQL, MySQL/MariaDB, and SQL Server support explicit transactions. Results obey the same row/byte limits and pagination as ordinary queries. Each transaction accepts one operation at a time; a failed query or changed connection/access policy rolls it back. Schema operations are excluded because some engines commit DDL implicitly. At most 32 transactions may be active or starting; idle transactions expire after one hour.
 

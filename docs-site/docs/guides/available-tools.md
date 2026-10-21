@@ -15,6 +15,15 @@ Tool schema options do not imply identical driver support. Explicit transactions
 
 Transaction results use the same row/byte budgets and stored-result readers as ordinary queries. Only one operation may run on a transaction at a time. Query failure, changed connection settings, or an updated access policy rolls the transaction back. Schema operations are excluded to avoid implicit DDL commits. The server caps active plus starting transactions at 32 and cleans up idle transactions after one hour.
 
+## Dropping a table
+
+`drop_table` requires `confirm: true`. Without confirmation, it returns a safety message without accessing the database. With confirmation, it checks table existence and access through the schema lookup, then executes the DROP through the normal query-policy path. Global read-only mode, per-connection read-only settings, and table access policies still apply.
+
+Supply `tableName` as an exact catalog name: `table` or `schema.table` (database-qualified for MySQL/MariaDB and ClickHouse). Each part must match `[A-Za-z_][A-Za-z0-9_]*` and be at most 128 characters. Do not include double quotes, backticks, or brackets; quoted identifiers, names containing dots within a part, and names with more than two parts are unsupported. The server quotes each validated part for the target dialect.
+
+Names retain their catalog case. For Oracle, use the name reported by the catalog, normally `ORDERS` or `HR.ORDERS`; lowercase input is not automatically uppercased. SQLite accepts only unqualified names or `main.table`; other schemas are rejected because the existence/access metadata lookup currently inspects `main`.
+
+
 ## Values and large results
 
 Results use positional `columns` and `rows`, preserving repeated column names. Unsafe integers return as strings. PostgreSQL JSON/JSONB (including arrays), recognized MySQL/MariaDB JSON values, native Oracle JSON, and DuckDB values preserve nested large integers and decimal text. Fractional JSON numbers on these paths return as strings, including small fractions. Ordinary text columns containing JSON remain text. PostgreSQL NUMERIC arrays also retain exact text. PostgreSQL dates/timestamps and MySQL/MariaDB dates/times return native text, preserving sub-millisecond fields. Timestamp text follows the database session's timezone and formatting; it does not imply a timezone where the type has none. Driver-provided non-finite numbers return as `"Infinity"`, `"-Infinity"`, or `"NaN"`, including inside arrays.
