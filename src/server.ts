@@ -1053,7 +1053,9 @@ export class OmniSQLMCPServer {
 
         switch (name) {
           case 'list_databases':
-            return await this.handleListDatabases(args as { connectionId: string });
+            return await this.handleListDatabases(
+              args as Parameters<typeof this.handleListDatabases>[0]
+            );
 
           case 'get_table_stats': {
             const connection = await this.getConnection(
@@ -1107,144 +1109,103 @@ export class OmniSQLMCPServer {
             };
           }
           case 'list_connections':
-            return await this.handleListConnections(args as { includeDetails?: boolean });
+            return await this.handleListConnections(
+              args as Parameters<typeof this.handleListConnections>[0]
+            );
 
           case 'get_connection_info':
-            return await this.handleGetConnectionInfo(args as { connectionId: string });
+            return await this.handleGetConnectionInfo(
+              args as Parameters<typeof this.handleGetConnectionInfo>[0]
+            );
 
           case 'execute_query':
             return await this.handleExecuteQuery(
-              args as {
-                connectionId: string;
-                query: string;
-                maxRows?: number;
-              }
+              args as Parameters<typeof this.handleExecuteQuery>[0]
             );
 
           case 'write_query':
-            return await this.handleWriteQuery(
-              args as {
-                connectionId: string;
-                query: string;
-              }
-            );
+            return await this.handleWriteQuery(args as Parameters<typeof this.handleWriteQuery>[0]);
 
           case 'create_table':
             return await this.handleCreateTable(
-              args as {
-                connectionId: string;
-                query: string;
-              }
+              args as Parameters<typeof this.handleCreateTable>[0]
             );
 
           case 'alter_table':
-            return await this.handleAlterTable(
-              args as {
-                connectionId: string;
-                query: string;
-              }
-            );
+            return await this.handleAlterTable(args as Parameters<typeof this.handleAlterTable>[0]);
 
           case 'drop_table':
-            return await this.handleDropTable(
-              args as {
-                connectionId: string;
-                tableName: string;
-                confirm: boolean;
-              }
-            );
+            return await this.handleDropTable(args as Parameters<typeof this.handleDropTable>[0]);
 
           case 'get_table_schema':
             return await this.handleGetTableSchema(
-              args as {
-                connectionId: string;
-                tableName: string;
-                includeIndexes?: boolean;
-              }
+              args as Parameters<typeof this.handleGetTableSchema>[0]
             );
 
           case 'export_data':
-            return await this.handleExportData(
-              args as {
-                connectionId: string;
-                query: string;
-                format?: string;
-                includeHeaders?: boolean;
-                maxRows?: number;
-              }
-            );
+            return await this.handleExportData(args as Parameters<typeof this.handleExportData>[0]);
 
           case 'test_connection':
-            return await this.handleTestConnection(args as { connectionId: string });
+            return await this.handleTestConnection(
+              args as Parameters<typeof this.handleTestConnection>[0]
+            );
 
           case 'get_database_stats':
-            return await this.handleGetDatabaseStats(args as { connectionId: string });
+            return await this.handleGetDatabaseStats(
+              args as Parameters<typeof this.handleGetDatabaseStats>[0]
+            );
 
           case 'list_tables':
-            return await this.handleListTables(
-              args as {
-                connectionId: string;
-                schema?: string;
-                includeViews?: boolean;
-              }
-            );
+            return await this.handleListTables(args as Parameters<typeof this.handleListTables>[0]);
 
           case 'append_insight':
             return await this.handleAppendInsight(
-              args as {
-                insight: string;
-                connection?: string;
-                tags?: string[];
-              }
+              args as Parameters<typeof this.handleAppendInsight>[0]
             );
 
           case 'list_insights':
             return await this.handleListInsights(
-              args as {
-                connection?: string;
-                tags?: string[];
-              }
+              args as Parameters<typeof this.handleListInsights>[0]
             );
 
           // Transaction tools
           case 'begin_transaction':
-            return await this.handleBeginTransaction(args as { connectionId: string });
+            return await this.handleBeginTransaction(
+              args as Parameters<typeof this.handleBeginTransaction>[0]
+            );
 
           case 'commit_transaction':
-            return await this.handleCommitTransaction(args as { transactionId: string });
+            return await this.handleCommitTransaction(
+              args as Parameters<typeof this.handleCommitTransaction>[0]
+            );
 
           case 'rollback_transaction':
-            return await this.handleRollbackTransaction(args as { transactionId: string });
+            return await this.handleRollbackTransaction(
+              args as Parameters<typeof this.handleRollbackTransaction>[0]
+            );
 
           case 'execute_in_transaction':
             return await this.handleExecuteInTransaction(
-              args as { transactionId: string; query: string }
+              args as Parameters<typeof this.handleExecuteInTransaction>[0]
             );
 
           // Query analysis tools
           case 'explain_query':
             return await this.handleExplainQuery(
-              args as {
-                connectionId: string;
-                query: string;
-                analyze?: boolean;
-                format?: 'text' | 'json';
-              }
+              args as Parameters<typeof this.handleExplainQuery>[0]
             );
 
           // Schema comparison tools
           case 'compare_schemas':
             return await this.handleCompareSchemas(
-              args as {
-                sourceConnectionId: string;
-                targetConnectionId: string;
-                includeMigrationScript?: boolean;
-              }
+              args as Parameters<typeof this.handleCompareSchemas>[0]
             );
 
           // Pool management tools
           case 'get_pool_stats':
-            return await this.handleGetPoolStats(args as { connectionId: string });
+            return await this.handleGetPoolStats(
+              args as Parameters<typeof this.handleGetPoolStats>[0]
+            );
 
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

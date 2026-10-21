@@ -112,6 +112,29 @@ describe('required connection handlers', () => {
       ],
     });
   });
+  it('passes database and compression options through dispatch unchanged', async () => {
+    const { server } = fixture();
+    let dispatch: any;
+    server.server = {
+      setRequestHandler: (schema: unknown, handler: unknown) => {
+        if (schema === CallToolRequestSchema) dispatch = handler;
+      },
+    };
+    const args = {
+      connectionId: 'fixture',
+      database: 'reporting',
+      query: 'SELECT 1',
+      compression: 'gzip',
+    };
+    server.handleExportData = async (received: unknown) => {
+      expect(received).toEqual(args);
+      return { content: [{ type: 'text', text: 'unchanged' }] };
+    };
+    server.setupToolHandlers();
+    expect(await dispatch({ params: { name: 'export_data', arguments: args } })).toEqual({
+      content: [{ type: 'text', text: 'unchanged' }],
+    });
+  });
   it('blocks all transaction/write tools at dispatch in global read-only mode', async () => {
     const { server } = fixture();
     let dispatch: any;
