@@ -599,9 +599,30 @@ function buildOracleSchemaQuery(tableName: string): string {
     `;
 }
 
-/**
- * Build schema query based on database driver
- */
+// Metadata names are exact catalog names, not SQL expressions; quoted input remains unsupported.
+export function dropTableTarget(
+  driver: string,
+  name: string
+): { tableName: string; query: string } {
+  // Reject quotes before separating parts, including quoted names containing dots.
+  if (/["`[\]]/.test(name)) throw new Error('Identifier contains invalid characters');
+  const parts = name.trim().split('.').map(sanitizeIdentifier);
+  if (parts.length > 2) throw new Error('Expected table or schema.table');
+  const dialect = sqlDialect(driver);
+  // SQLite metadata currently inspects main only, even for qualified names.
+  if (dialect === 'sqlite' && parts.length === 2 && parts[0] !== 'main')
+    throw new Error('SQLite table metadata supports only the main schema');
+  const quoted = parts.map((part) =>
+    dialect === 'mysql'
+      ? '`' + part + '`'
+      : dialect === 'mssql'
+        ? '[' + part + ']'
+        : '"' + part + '"'
+  );
+  return { tableName: parts.join('.'), query: 'DROP TABLE ' + quoted.join('.') };
+}
+
+/** Build schema query based on database driver. */
 export function buildSchemaQuery(driver: string, tableName: string): string {
   const dialect = sqlDialect(driver);
   const driverLower =

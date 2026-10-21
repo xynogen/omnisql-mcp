@@ -28,6 +28,7 @@ import { WorkspaceClient } from './workspace-client.js';
 import type { BusinessInsight, DatabaseConnection, SchemaDiff, QueryResult } from './types.js';
 import {
   validateQuery,
+  dropTableTarget,
   enforceReadOnly,
   sanitizeConnectionId,
   parseConnectionId,
@@ -295,6 +296,24 @@ export class OmniSQLMCPServer {
     if (!connection) return null;
     if (!this.isConnectionAllowed(connection)) return null;
     this.accessPolicy.assertConnection(connection);
+    return connection;
+  }
+
+  private async requireConnection(
+    connectionId: string,
+    database?: string
+  ): Promise<DatabaseConnection> {
+    connectionId = sanitizeConnectionId(connectionId);
+    const connection = await this.getConnection(connectionId, database);
+    if (!connection)
+      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
+    return connection;
+  }
+
+  private async requireWritableConnection(connectionId: string, database?: string) {
+    const connection = await this.requireConnection(connectionId, database);
+    if (this.accessPolicy.isReadOnly(connection))
+      throw new McpError(ErrorCode.InvalidRequest, 'This saved connection is read-only');
     return connection;
   }
 
@@ -1243,11 +1262,7 @@ export class OmniSQLMCPServer {
   }
 
   private async handleListDatabases(args: { connectionId: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId);
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId);
     const source = this.catalogSource(connection);
     const databases = await this.workspaceClient.listDatabases(connection);
     return this.presentDocument(databases, source);
@@ -1299,12 +1314,7 @@ export class OmniSQLMCPServer {
   }
 
   private async handleGetConnectionInfo(args: { connectionId: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId);
 
     // Redact credentials before returning to client
     const redacted = {
@@ -1330,7 +1340,6 @@ export class OmniSQLMCPServer {
     query: string;
     maxRows?: number;
   }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
     const query = args.query.trim();
     const requestedRows = args.maxRows || DEFAULT_QUERY_ROWS;
     const maxRows = Math.min(Math.max(1, requestedRows), MAX_QUERY_ROWS);
@@ -1347,10 +1356,7 @@ export class OmniSQLMCPServer {
       throw new McpError(ErrorCode.InvalidParams, readOnlyError);
     }
 
-    const connection = await this.getConnection(connectionId, args.database);
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     const source = this.artifactSource(connection, query);
     const result = await this.workspaceClient.executeQuery(connection, query, {
@@ -1451,7 +1457,6 @@ export class OmniSQLMCPServer {
   }
 
   private async handleWriteQuery(args: { connectionId: string; database?: string; query: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
     const query = args.query.trim();
 
     // Validate query type
@@ -1479,12 +1484,7 @@ export class OmniSQLMCPServer {
       throw new McpError(ErrorCode.InvalidParams, validationError);
     }
 
-    const connection = await this.getConnection(connectionId, args.database);
-    if (connection && this.accessPolicy.isReadOnly(connection))
-      throw new McpError(ErrorCode.InvalidRequest, 'This saved connection is read-only');
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireWritableConnection(args.connectionId, args.database);
 
     const result = await this.workspaceClient.executeQuery(connection, query);
 
@@ -1511,7 +1511,6 @@ export class OmniSQLMCPServer {
     database?: string;
     query: string;
   }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
     const query = args.query.trim();
 
     const statementError = validateStatement(query);
@@ -1521,12 +1520,7 @@ export class OmniSQLMCPServer {
       throw new McpError(ErrorCode.InvalidParams, 'Only CREATE TABLE statements are allowed');
     }
 
-    const connection = await this.getConnection(connectionId, args.database);
-    if (connection && this.accessPolicy.isReadOnly(connection))
-      throw new McpError(ErrorCode.InvalidRequest, 'This saved connection is read-only');
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireWritableConnection(args.connectionId, args.database);
 
     const result = await this.workspaceClient.executeQuery(connection, query);
 
@@ -1549,7 +1543,6 @@ export class OmniSQLMCPServer {
   }
 
   private async handleAlterTable(args: { connectionId: string; database?: string; query: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
     const query = args.query.trim();
 
     const statementError = validateStatement(query);
@@ -1559,12 +1552,7 @@ export class OmniSQLMCPServer {
       throw new McpError(ErrorCode.InvalidParams, 'Only ALTER TABLE statements are allowed');
     }
 
-    const connection = await this.getConnection(connectionId, args.database);
-    if (connection && this.accessPolicy.isReadOnly(connection))
-      throw new McpError(ErrorCode.InvalidRequest, 'This saved connection is read-only');
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireWritableConnection(args.connectionId, args.database);
 
     const result = await this.workspaceClient.executeQuery(connection, query);
 
@@ -1592,7 +1580,6 @@ export class OmniSQLMCPServer {
     tableName: string;
     confirm: boolean;
   }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
     const tableName = args.tableName;
 
     if (!tableName) {
@@ -1618,16 +1605,12 @@ export class OmniSQLMCPServer {
       };
     }
 
-    const connection = await this.getConnection(connectionId, args.database);
-    if (connection && this.accessPolicy.isReadOnly(connection))
-      throw new McpError(ErrorCode.InvalidRequest, 'This saved connection is read-only');
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireWritableConnection(args.connectionId, args.database);
 
+    const target = dropTableTarget(connection.driver, tableName);
     // Check if table exists first
     try {
-      await this.workspaceClient.getTableSchema(connection, tableName);
+      await this.workspaceClient.getTableSchema(connection, target.tableName);
     } catch {
       throw new McpError(
         ErrorCode.InvalidParams,
@@ -1635,7 +1618,7 @@ export class OmniSQLMCPServer {
       );
     }
 
-    const dropQuery = `DROP TABLE "${tableName}"`;
+    const dropQuery = target.query;
     const result = await this.workspaceClient.executeQuery(connection, dropQuery);
 
     return {
@@ -1662,12 +1645,7 @@ export class OmniSQLMCPServer {
     tableName: string;
     includeIndexes?: boolean;
   }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     const source = this.catalogSource(connection);
     const schema = await this.workspaceClient.getTableSchema(connection, args.tableName);
@@ -1688,16 +1666,12 @@ export class OmniSQLMCPServer {
     includeHeaders?: boolean;
     maxRows?: number;
   }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
     const query = args.query.trim();
 
     const policyError = validateQuery(query) || enforceReadOnly(query);
     if (policyError) throw new McpError(ErrorCode.InvalidParams, policyError);
 
-    const connection = await this.getConnection(connectionId, args.database);
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     const requestedRows = args.maxRows || DEFAULT_EXPORT_ROWS;
     const maxRows = Math.min(Math.max(1, requestedRows), MAX_EXPORT_ROWS);
@@ -1762,12 +1736,7 @@ export class OmniSQLMCPServer {
   }
 
   private async handleTestConnection(args: { connectionId: string; database?: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     const testResult = await this.workspaceClient.testConnection(connection);
 
@@ -1782,12 +1751,7 @@ export class OmniSQLMCPServer {
   }
 
   private async handleGetDatabaseStats(args: { connectionId: string; database?: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     const source = this.catalogSource(connection);
     const stats = await this.workspaceClient.getDatabaseStats(connection);
@@ -1800,12 +1764,7 @@ export class OmniSQLMCPServer {
     schema?: string;
     includeViews?: boolean;
   }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     const source = this.catalogSource(connection);
     const tables = await this.workspaceClient.listTables(
@@ -1889,14 +1848,7 @@ export class OmniSQLMCPServer {
 
   // Transaction handlers
   private async handleBeginTransaction(args: { connectionId: string; database?: string }) {
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-    if (connection && this.accessPolicy.isReadOnly(connection))
-      throw new McpError(ErrorCode.InvalidRequest, 'This saved connection is read-only');
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireWritableConnection(args.connectionId, args.database);
 
     const result = await this.transactionManager.beginTransaction(connection);
 
@@ -1963,12 +1915,7 @@ export class OmniSQLMCPServer {
   }) {
     const policyError = validateQuery(args.query) || enforceReadOnly(args.query);
     if (policyError) throw new McpError(ErrorCode.InvalidParams, policyError);
-    const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(args.connectionId, args.database);
 
     if (args.analyze && connection.driver.toLowerCase().includes('oracle')) {
       // An actual plan would mean running the statement; EXPLAIN PLAN never does.
@@ -2090,11 +2037,7 @@ export class OmniSQLMCPServer {
   // Pool management handlers
   private async handleGetPoolStats(args: { connectionId: string; database?: string }) {
     const connectionId = sanitizeConnectionId(args.connectionId);
-    const connection = await this.getConnection(connectionId, args.database);
-
-    if (!connection) {
-      throw new McpError(ErrorCode.InvalidParams, `Connection not found: ${connectionId}`);
-    }
+    const connection = await this.requireConnection(connectionId, args.database);
 
     // Initialize pool if needed
     await this.poolManager.getPool(connection);
