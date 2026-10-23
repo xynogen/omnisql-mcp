@@ -6,8 +6,9 @@ import hljs from 'highlight.js';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const output = join(root, 'build');
-export const base = '/omnisql-mcp/';
+export const base = '/';
 const repo = 'https://github.com/srthkdev/omnisql-mcp';
+export const legacyRoutes = ['guides/databases', 'guides/access'];
 const manifest = JSON.parse(readFileSync(join(root, '../package.json'), 'utf8'));
 const tools = JSON.parse(readFileSync(join(root, 'data/tools.json'), 'utf8'));
 const escape = (value) =>
@@ -125,7 +126,7 @@ function footer() {
   return `<footer class="site-footer"><a class="wordmark" href="${base}">${mark}<span>omnisql</span></a><p>A small bridge between your databases and your assistant.</p><div><a href="${repo}">Source ↗</a><a href="${repo}/issues">Issues ↗</a><a href="${repo}/blob/main/LICENSE">MIT license</a></div></footer>`;
 }
 function shell(title, description, body, active = '') {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f3f1ec"><title>${escape(title)} — OmniSQL</title><meta name="description" content="${escape(description)}"><meta property="og:title" content="${escape(title)} — OmniSQL"><meta property="og:description" content="${escape(description)}"><meta property="og:image" content="https://srthkdev.github.io/omnisql-mcp/media/social-card.png"><link rel="icon" href="${base}media/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="${base}site.css"><script type="module" src="${base}site.js"></script></head><body data-base="${base}">${header(active)}${body}${footer()}${search}</body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f3f1ec"><title>${escape(title)} — OmniSQL</title><meta name="description" content="${escape(description)}"><meta property="og:title" content="${escape(title)} — OmniSQL"><meta property="og:description" content="${escape(description)}"><meta property="og:image" content="https://omnisql.srthkdev.com/media/social-card.png"><link rel="icon" href="${base}media/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="${base}site.css"><script type="module" src="${base}site.js"></script></head><body data-base="${base}">${header(active)}${body}${footer()}${search}</body></html>`;
 }
 function sidebar(current) {
   let group = '';
@@ -205,6 +206,16 @@ export async function build() {
       url: base + page.path + '/',
       text: source.replace(/[#*`|\[\]]/g, ' ').slice(0, 24000),
     });
+  }
+  // Published README versions used these paths before documentation moved under /docs.
+  for (const legacy of legacyRoutes) {
+    const destination = base + 'docs/' + legacy + '/';
+    write(
+      `${legacy}/index.html`,
+      shell('Documentation moved', 'Continue to the current documentation.',
+        `<main id="main"><h1>Documentation moved</h1><a href="${destination}">Open documentation ↗</a></main>`
+      ).replace('</head>', `<meta http-equiv="refresh" content="0; url=${destination}"></head>`)
+    );
   }
   for (const tool of tools)
     searchIndex.push({

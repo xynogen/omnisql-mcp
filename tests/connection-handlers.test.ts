@@ -86,7 +86,9 @@ describe('required connection handlers', () => {
       executeQuery: async () => ({ executionTime: 5, affectedRows: 1 }),
     };
     expect(await server.handleTestConnection({ connectionId: 'fixture' })).toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ success: true }, null, 2) }],
+      content: [
+        { type: 'text', text: JSON.stringify({ success: true, connectionId: 'fixture' }, null, 2) },
+      ],
     });
     expect(
       await server.handleWriteQuery({

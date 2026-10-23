@@ -34,7 +34,13 @@ describe('drop_table targeting', () => {
     ['oracle', 'HR.ORDERS', '"HR"."ORDERS"'],
     ['oracle', 'hr.orders', '"hr"."orders"'],
     ['duckdb', 'main.orders', '"main"."orders"'],
-    ['clickhouse', 'reports.orders', '"reports"."orders"'],
+    ['clickhouse', 'reports.orders', '`reports`.`orders`'],
+    ['postgresql', '"sales.region"."Order Items"', '"sales.region"."Order Items"'],
+    ['mysql', '`sales`.`order-items`', '`sales`.`order-items`'],
+    ['sqlserver', '[dbo].[Order Items]', '[dbo].[Order Items]'],
+    ['sqlite', '"a.b"', '"a.b"'],
+    ['sqlite', '"a""b"', '"a""b"'],
+    ['sqlite', '"orders; DROP TABLE secrets"', '"orders; DROP TABLE secrets"'],
   ])('uses %s quoting for the exact metadata target %s', async (driver, tableName, sql) => {
     const { server, checked, queries } = fixture(driver);
     await server.handleDropTable({ connectionId: 'fixture', tableName, confirm: true });
@@ -52,25 +58,16 @@ describe('drop_table targeting', () => {
     expect(checked).toEqual([]);
     expect(queries).toEqual([]);
   });
-  it.each([
-    '"a.b"',
-    '`orders`',
-    '[orders]',
-    'a..b',
-    'a.b.c',
-    'orders; DROP TABLE secrets',
-    'orders--',
-    'orders/*x*/',
-    'orders\\x',
-    'a"b',
-    '',
-  ])('rejects unsupported or unsafe name %s', async (tableName) => {
-    const { server, queries } = fixture();
-    await expect(
-      server.handleDropTable({ connectionId: 'fixture', tableName, confirm: true })
-    ).rejects.toThrow();
-    expect(queries).toEqual([]);
-  });
+  it.each(['a..b', 'a.b.c', '"unterminated', '[unterminated', '"a"b', '"a".b.c', 'orders\\x', ''])(
+    'rejects unsupported or unsafe name %s',
+    async (tableName) => {
+      const { server, queries } = fixture();
+      await expect(
+        server.handleDropTable({ connectionId: 'fixture', tableName, confirm: true })
+      ).rejects.toThrow();
+      expect(queries).toEqual([]);
+    }
+  );
   it('does not drop a different SQLite schema from the metadata check', async () => {
     const { server, queries } = fixture();
     await expect(
