@@ -254,7 +254,7 @@ try {
       const connection = {
         name: `${engine} synthetic fixture`,
         provider: engine === 'postgres' ? 'postgresql' : engine,
-        driver: engine === 'postgres' ? 'postgres-jdbc' : engine,
+        driver: engine === 'postgres' ? 'postgres-jdbc' : engine === 'mssql' ? 'microsoft' : engine,
         configuration: {
           ...config,
           sslmode: 'disable',
@@ -550,6 +550,12 @@ try {
         passwordEnv,
         properties: { sslmode: 'disable', encrypt: 'true', trustServerCertificate: 'true' },
       };
+      if (engine === 'postgres') {
+        // IFNULL belongs to other dialects. A visible PostgreSQL UDF must require a grant.
+        await admin.query(
+          'CREATE FUNCTION public.ifnull(integer,integer) RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 991 $$'
+        );
+      }
       writeFileSync(
         instanceFile,
         JSON.stringify({
@@ -561,12 +567,26 @@ try {
               policy: { allowTables: [orders, owner + '.' + orders] },
               limits: { poolMax: 1, timeoutMs: 5000, maxRows: 1 },
             },
+            ...(engine === 'postgres'
+              ? {
+                  approved_functions: {
+                    ...base,
+                    readOnly: true,
+                    policy: {
+                      allowTables: [orders, owner + '.' + orders],
+                      allowFunctions: ['public.ifnull'],
+                    },
+                    limits: { poolMax: 1, timeoutMs: 5000, maxRows: 1 },
+                  },
+                }
+              : {}),
             edits: {
               ...base,
               readOnly: false,
               policy: {
                 allowTables: [orders, owner + '.' + orders],
                 denyTables: [customers, owner + '.' + customers],
+                ...(engine === 'mssql' ? { denyFunctions: ['len'] } : {}),
               },
               limits: { poolMax: 2, timeoutMs: 5000, maxRows: 20 },
             },
@@ -576,10 +596,14 @@ try {
       );
       client = await startMcp(workspace, false, {
         OMNISQL_CONFIG_FILE: instanceFile,
-        OMNISQL_ALLOWED_CONNECTIONS: 'reports,edits',
+        OMNISQL_ALLOWED_CONNECTIONS:
+          engine === 'postgres' ? 'reports,edits,approved_functions' : 'reports,edits',
         OMNISQL_INTEGRATION_PASSWORD: password,
       });
-      assert.equal((await call(client, 'list_connections', {})).length, 2);
+      assert.equal(
+        (await call(client, 'list_connections', {})).length,
+        engine === 'postgres' ? 3 : 2
+      );
       const concurrent = await Promise.all(
         ['reports', 'edits', 'reports', 'edits'].map((connectionId) =>
           call(client, 'execute_query', {
@@ -613,6 +637,178 @@ try {
         () => call(client, 'get_table_schema', { connectionId: 'edits', tableName: customers }),
         /Table.*policy/
       );
+      if (engine === 'postgres') {
+        const readReports = (query) =>
+          call(client, 'execute_query', { connectionId: 'reports', query });
+        const checkBuiltins = async () => {
+          const lower = await readReports(
+            'SELECT lower(CAST(status AS text)) FROM public.orders WHERE id=1'
+          );
+          assert.equal(lower.rows[0][0], 'paid');
+          assert.equal(
+            Number((await readReports('SELECT COUNT(*) FROM public.orders')).rows[0][0]),
+            3
+          );
+        };
+        await checkBuiltins();
+        assert.equal((await admin.query('SELECT public.ifnull(1,0) AS value'))[0].value, 991);
+        await assert.rejects(
+          () => readReports('SELECT ifnull(id,0) FROM public.orders WHERE id=1'),
+          /Function.*policy/
+        );
+        const approved = await call(client, 'execute_query', {
+          connectionId: 'approved_functions',
+          query: 'SELECT public.ifnull(id,0) FROM public.orders WHERE id=1',
+        });
+        assert.equal(Number(approved.rows[0][0]), 991);
+        // PostgreSQL resolves overloads by arguments, not just pg_catalog search precedence.
+        // This read-only definer UDF would reveal a forbidden table through a trusted name.
+        await admin.query(
+          'CREATE FUNCTION public.lower(bigint) RETURNS text LANGUAGE sql STABLE ' +
+            'SECURITY DEFINER SET search_path=pg_catalog,public ' +
+            'AS $$ SELECT name FROM public.customers WHERE id=1 $$'
+        );
+        try {
+          assert.equal(
+            (await admin.query('SELECT lower(CAST(1 AS bigint)) AS value'))[0].value,
+            'Asha Rao'
+          );
+          await assert.rejects(
+            () => readReports('SELECT lower(CAST(id AS bigint)) FROM public.orders WHERE id=1'),
+            /Function.*policy|ambiguous/
+          );
+          await assert.rejects(
+            () =>
+              readReports('SELECT public.lower(CAST(id AS bigint)) FROM public.orders WHERE id=1'),
+            /Function.*policy/
+          );
+          assert.equal(
+            Number((await readReports('SELECT COUNT(*) FROM public.orders')).rows[0][0]),
+            3
+          );
+        } finally {
+          await admin.query('DROP FUNCTION public.lower(bigint)');
+          await admin.query('DROP FUNCTION public.ifnull(integer,integer)');
+        }
+        await checkBuiltins();
+        console.log(
+          'postgres: foreign-dialect UDFs, definer overload isolation and explicit function grants passed'
+        );
+      }
+      if (engine === 'oracle') {
+        const readReports = (query) =>
+          call(client, 'execute_query', { connectionId: 'reports', query });
+        await admin.query(
+          'CREATE FUNCTION IFNULL(a NUMBER,b NUMBER) RETURN NUMBER DETERMINISTIC ' +
+            'IS BEGIN RETURN 991; END;'
+        );
+        let lowerCreated = false;
+        try {
+          assert.equal(
+            Number(
+              (await admin.query('SELECT IFNULL(1,0) AS function_value FROM dual'))[0]
+                .FUNCTION_VALUE
+            ),
+            991
+          );
+          await assert.rejects(
+            () => readReports('SELECT IFNULL(id,0) FROM ORDERS WHERE id=1'),
+            /Function.*policy/
+          );
+          await admin.query(
+            'CREATE FUNCTION "LOWER"(p_value VARCHAR2) RETURN VARCHAR2 DETERMINISTIC ' +
+              "IS BEGIN RETURN 'udf_marker'; END;"
+          );
+          lowerCreated = true;
+          assert.equal(
+            (await admin.query("SELECT OMNISQL.LOWER('PAID') AS function_value FROM dual"))[0]
+              .FUNCTION_VALUE,
+            'udf_marker'
+          );
+          const resolution = (
+            await admin.query("SELECT LOWER('PAID') AS function_value FROM dual")
+          )[0].FUNCTION_VALUE;
+          assert(['paid', 'udf_marker'].includes(resolution));
+          if (resolution === 'udf_marker') {
+            await assert.rejects(
+              () => readReports('SELECT LOWER(status) FROM ORDERS WHERE id=1'),
+              /Function.*policy|ambiguous/
+            );
+          }
+          await assert.rejects(
+            () => readReports('SELECT OMNISQL.LOWER(status) FROM ORDERS WHERE id=1'),
+            /Function.*policy/
+          );
+          console.log(
+            `oracle: unqualified LOWER resolves to ${resolution === 'paid' ? 'native function' : 'schema UDF'}`
+          );
+        } finally {
+          if (lowerCreated) await admin.query('DROP FUNCTION "LOWER"');
+          await admin.query('DROP FUNCTION IFNULL');
+        }
+        assert.equal(
+          (await readReports('SELECT LOWER(status) FROM ORDERS WHERE id=1')).rows[0][0],
+          'paid'
+        );
+        assert.equal(Number((await readReports('SELECT COUNT(*) FROM ORDERS')).rows[0][0]), 3);
+        console.log(
+          'oracle: foreign-dialect UDF rejection, qualified UDF isolation and built-in recovery passed'
+        );
+      }
+      if (engine === 'mssql') {
+        // Table-scoped connections must accept SQL Server built-ins without a UDF grant.
+        // Cast high-precision datetime2 output to exact text before driver conversion.
+        const builtins = await call(client, 'execute_query', {
+          connectionId: 'reports',
+          query:
+            'SELECT LEN(status) AS status_length, REVERSE(status) AS reversed_status, ' +
+            "CHARINDEX('a',status) AS a_position, " +
+            "DATEDIFF_BIG(day,'2020-01-01','2020-01-02') AS day_count, " +
+            'CONVERT(varchar(10),GETDATE(),23) AS today, ' +
+            'CONVERT(varchar(33),SYSDATETIME(),126) AS observed_time ' +
+            'FROM dbo.orders WHERE id=1',
+        });
+        assert.equal(Number(builtins.rows[0][0]), 4);
+        assert.equal(builtins.rows[0][1], 'diap');
+        assert.equal(Number(builtins.rows[0][2]), 2);
+        assert.equal(Number(builtins.rows[0][3]), 1);
+        assert.match(builtins.rows[0][4], /^\d{4}-\d{2}-\d{2}$/);
+        assert.match(builtins.rows[0][5], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+        await assert.rejects(
+          () =>
+            call(client, 'execute_query', {
+              connectionId: 'edits',
+              query: 'SELECT LEN(status) FROM dbo.orders WHERE id=1',
+            }),
+          /Function.*policy/
+        );
+        const stillAllowed = await call(client, 'execute_query', {
+          connectionId: 'edits',
+          query: 'SELECT REVERSE(status) FROM dbo.orders WHERE id=1',
+        });
+        assert.equal(stillAllowed.rows[0][0], 'diap');
+        // A real UDF with the same name must still resolve through the catalog policy.
+        await admin.query(
+          'CREATE FUNCTION dbo.LEN(@value nvarchar(100)) RETURNS int AS BEGIN RETURN 999; END'
+        );
+        try {
+          assert.equal(
+            (await admin.query("SELECT dbo.LEN('paid') AS udf_value"))[0].udf_value,
+            999
+          );
+          await assert.rejects(
+            () =>
+              call(client, 'execute_query', {
+                connectionId: 'reports',
+                query: 'SELECT dbo.LEN(status) FROM dbo.orders WHERE id=1',
+              }),
+            /Function.*policy/
+          );
+        } finally {
+          await admin.query('DROP FUNCTION dbo.LEN');
+        }
+        console.log('mssql: scoped built-ins, function denies and qualified UDF isolation passed');
+      }
       const visible = await call(client, 'list_tables', { connectionId: 'reports' });
       assert.equal(visible.length, 1);
       assert.equal(visible[0].name.toLowerCase(), 'orders');
